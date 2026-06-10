@@ -78,6 +78,10 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   List<String> _autocomplete = [];
   Timer? _autocompleteTimer;
 
+  /// 챗봇 응답도, 자동완성도 없을 때 노출하는 기본 메뉴 칩.
+  /// 사용자가 무엇을 물을 수 있는지 가이드 역할.
+  static const _defaultChips = ['제품 추천', '성분 분석', '피부 진단', '메뉴'];
+
   bool _sending = false;
   Object? _sessionId;
 
@@ -180,6 +184,18 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     try {
       final res = await ChatbotService.chat(text, sessionId: _sessionId);
 
+      // 디버그 — 챗봇이 components를 잘 보내는지, 어떤 모양인지 확인용.
+      debugPrint(
+        '[Chatbot ←] intent=${res['intent']} '
+        'components=${res['components']?.runtimeType} '
+        'quickReplies=${res['quickReplies']}',
+      );
+      if (res['components'] is List) {
+        for (final c in (res['components'] as List)) {
+          debugPrint('  · component: $c');
+        }
+      }
+
       final session = res['session_id'] ?? res['id'];
       if (session != null) _sessionId = session;
 
@@ -225,12 +241,28 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
 
   void _onComponentAction(Map<String, dynamic> c) {
     final type = str(c, ['type']).toLowerCase();
+    final target = c['target'] ?? c['page'] ?? c['route'];
+    final productId = c['productId'] ?? c['product_id'];
+
+    // 디버그 로그 — 브라우저 DevTools(F12) Console에서 어떤 분기로 갔는지 확인 가능.
+    debugPrint(
+      '[Chatbot] component action: type="$type" target="$target" '
+      'productId="$productId" keys=${c.keys.toList()}',
+    );
+
+    // 분기 우선순위:
+    //  1) target 필드가 있으면 → 페이지 링크 (type='card'여도 link로 취급)
+    //  2) type == 'link' → 페이지 링크
+    //  3) productId 있음 → 상품 상세
+    //  4) 그 외 → 성분 다이얼로그
+    if (target != null && target.toString().isNotEmpty) {
+      _openPageLink(c);
+      return;
+    }
     if (type == 'link') {
       _openPageLink(c);
       return;
     }
-    // 카드: productId가 있으면 상품 상세로, 없으면 성분 상세 다이얼로그.
-    final productId = c['productId'] ?? c['product_id'];
     if (productId != null) {
       _openProductFromCard(c);
     } else {
@@ -472,12 +504,18 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                   },
                 ),
               ),
-              // 입력 중이면 자동완성, 아니면 마지막 봇 응답의 quickReplies.
+              // 칩 우선순위: 입력 중인 자동완성 > 마지막 봇 응답의 quickReplies
+              // > 기본 메뉴 칩 (둘 다 비었을 때 가이드 역할).
               Builder(
                 builder: (_) {
-                  final chips =
-                      _autocomplete.isNotEmpty ? _autocomplete : _quickReplies;
-                  if (chips.isEmpty) return const SizedBox.shrink();
+                  final List<String> chips;
+                  if (_autocomplete.isNotEmpty) {
+                    chips = _autocomplete;
+                  } else if (_quickReplies.isNotEmpty) {
+                    chips = _quickReplies;
+                  } else {
+                    chips = _defaultChips;
+                  }
                   return _ChipBar(chips: chips, onTap: _send);
                 },
               ),
