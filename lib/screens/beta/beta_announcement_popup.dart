@@ -29,7 +29,8 @@ class _BetaPopup extends StatelessWidget {
   Widget build(BuildContext context) {
     return Dialog(
       backgroundColor: Colors.white,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 64),
+      // 작은 폰에서도 액션 버튼이 잘리지 않도록 vertical inset을 줄임.
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 400),
@@ -37,7 +38,7 @@ class _BetaPopup extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 헤더 그라데이션 배너
+            // 헤더 그라데이션 배너 (고정)
             Container(
               padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
               decoration: const BoxDecoration(
@@ -94,10 +95,12 @@ class _BetaPopup extends StatelessWidget {
               ),
             ),
 
-            // 본문 — 혜택 / 주의점
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
-              child: Column(
+            // 본문 — 혜택 / 주의점 (스크롤 가능: 작은 화면에서 넘쳐도
+            // 아래 액션 버튼은 항상 보이게)
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
+                child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: const [
                   _SectionTitle(text: '혜택'),
@@ -142,10 +145,11 @@ class _BetaPopup extends StatelessWidget {
                     desc: '단, 실패는 시도 횟수에서 차감되지 않아요',
                   ),
                 ],
+                ),
               ),
             ),
 
-            // 액션
+            // 액션 (하단 고정 — 화면이 좁아도 항상 노출)
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
               child: Column(
