@@ -89,11 +89,38 @@ OcrResultScreen buildResultScreen(
       ? List<String>.from((efficacy['soothing'] as List).map((e) => '$e'))
       : const <String>[];
 
+  // 🆕 백엔드가 제품명으로 DB를 자동 매칭해서 보내주는 객체.
+  // 있으면 제품명·브랜드·이미지·가격을 정확한 DB 값으로 표시.
+  final mp = r['matched_product'];
+  final matchedProduct = mp is Map ? mp.cast<String, dynamic>() : null;
+  String mpStr(List<String> keys) {
+    if (matchedProduct == null) return '';
+    for (final k in keys) {
+      final v = matchedProduct[k];
+      if (v != null) return '$v';
+    }
+    return '';
+  }
+
+  num? mpNum(List<String> keys) {
+    if (matchedProduct == null) return null;
+    for (final k in keys) {
+      final v = matchedProduct[k];
+      if (v is num) return v;
+      if (v is String) return num.tryParse(v);
+    }
+    return null;
+  }
+
   return OcrResultScreen(
     imageBytes: imageBytes,
     imageUrl: s(['image_url', 'imageUrl']),
     productName: s(['product_name', 'name']),
     capacity: s(['capacity', 'volume']),
+    matchedProductName: mpStr(['product_name', 'name']),
+    matchedBrandName: mpStr(['brand_name', 'brand']),
+    matchedImageUrl: mpStr(['image_url', 'imageUrl']),
+    matchedPrice: mpNum(['price']),
     rawText: s(['raw_text', 'ocr_text', 'text']),
     confidence: (r['ocr_confidence'] ?? r['confidence']) as num?,
     ingredients: strList(r['ingredients']),
@@ -140,12 +167,23 @@ class OcrResultScreen extends StatelessWidget {
   final List<String> moisturizingIngredients;
   final List<String> soothingIngredients;
 
+  // 🆕 백엔드가 자동 매칭해 보내주는 제품 정보. 비어 있으면(매칭 실패)
+  // 기존 OCR 결과 + 이름 검색 폴백으로 표시.
+  final String matchedProductName;
+  final String matchedBrandName;
+  final String matchedImageUrl;
+  final num? matchedPrice;
+
   const OcrResultScreen({
     super.key,
     this.imageBytes,
     this.imageUrl = '',
     this.productName = '',
     this.capacity = '',
+    this.matchedProductName = '',
+    this.matchedBrandName = '',
+    this.matchedImageUrl = '',
+    this.matchedPrice,
     this.rawText = '',
     this.confidence,
     this.ingredients = const [],
@@ -164,6 +202,34 @@ class OcrResultScreen extends StatelessWidget {
     this.moisturizingIngredients = const [],
     this.soothingIngredients = const [],
   });
+
+  /// 표시용 제품명 — 백엔드 매칭이 있으면 그 정식 이름, 없으면 OCR 추출명.
+  String get _displayName =>
+      matchedProductName.isNotEmpty ? matchedProductName : productName;
+
+  /// 제품명 아래에 한 줄로 들어가는 부제.
+  /// 매칭 성공: "브랜드 · 14,800원" / 가격만 있으면 가격만 / 둘 다 없으면 빈 문자열.
+  /// 매칭 실패: 기존 OCR capacity 값(예: "100ml" 또는 "확인 불가").
+  String get _subtitleText {
+    if (matchedBrandName.isNotEmpty || matchedPrice != null) {
+      final parts = <String>[];
+      if (matchedBrandName.isNotEmpty) parts.add(matchedBrandName);
+      if (matchedPrice != null) parts.add(_formatPrice(matchedPrice!));
+      return parts.join(' · ');
+    }
+    return capacity;
+  }
+
+  static String _formatPrice(num p) {
+    final i = p.round();
+    final s = i.toString();
+    final buf = StringBuffer();
+    for (var j = 0; j < s.length; j++) {
+      if (j > 0 && (s.length - j) % 3 == 0) buf.write(',');
+      buf.write(s[j]);
+    }
+    return '${buf.toString()}원';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -198,18 +264,22 @@ class OcrResultScreen extends StatelessWidget {
 
             ClipRRect(
               borderRadius: BorderRadius.circular(24),
-              child: _LookupProductImage(
-                productName: productName,
-                fallbackImageUrl: imageUrl,
-                fallbackBytes: imageBytes,
-              ),
+              // 백엔드 matched_product가 image_url을 주면 그걸 직접 쓰고,
+              // 없으면 기존 이름 기반 검색으로 폴백.
+              child: matchedImageUrl.isNotEmpty
+                  ? _MatchedProductImage(url: matchedImageUrl)
+                  : _LookupProductImage(
+                      productName: productName,
+                      fallbackImageUrl: imageUrl,
+                      fallbackBytes: imageBytes,
+                    ),
             ),
 
             const SizedBox(height: 24),
 
-            if (productName.isNotEmpty) ...[
+            if (_displayName.isNotEmpty) ...[
               Text(
-                productName,
+                _displayName,
                 style: const TextStyle(
                   fontFamily: 'Pretendard',
                   fontSize: 22,
@@ -218,10 +288,10 @@ class OcrResultScreen extends StatelessWidget {
                   color: AppColors.textMain,
                 ),
               ),
-              if (capacity.isNotEmpty) ...[
+              if (_subtitleText.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 Text(
-                  capacity,
+                  _subtitleText,
                   style: const TextStyle(
                     fontFamily: 'Pretendard',
                     fontSize: 14,
@@ -420,6 +490,56 @@ class OcrResultScreen extends StatelessWidget {
 }
 
 // --- 위젯들 ---
+
+/// 백엔드 `matched_product.image_url`을 그대로 표시 + "제품 DB 매칭" 배지.
+/// 이름 검색이 불필요해 즉시 렌더링 — _LookupProductImage보다 우선 사용.
+class _MatchedProductImage extends StatelessWidget {
+  final String url;
+  const _MatchedProductImage({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        ProductImage(
+          url: url,
+          width: double.infinity,
+          height: 200,
+          borderRadius: 0,
+        ),
+        Positioned(
+          top: 10,
+          left: 10,
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.verified_outlined,
+                    size: 11, color: Colors.white),
+                SizedBox(width: 3),
+                Text(
+                  '제품 DB 매칭',
+                  style: TextStyle(
+                    fontFamily: 'Pretendard',
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 /// 추출한 제품명으로 제품 DB를 검색해서, 매칭되는 상품의 등록 이미지를
 /// 우선 보여줍니다. 매칭 실패 시 OCR이 캡처한 이미지(URL → bytes)로 폴백.
