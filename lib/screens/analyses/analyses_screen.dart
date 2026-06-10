@@ -80,26 +80,93 @@ class _AnalysesScreenState extends State<AnalysesScreen> {
       if (AuthSession.userId != currentUid) return;
       AnalysisHistoryStore.items
         ..clear()
-        ..addAll(listOf(data).map((m) => AnalysisRecord(
-              id: '${m['analysis_id'] ?? m['id'] ?? ''}',
-              productName: str(m, ['product_name', 'product', 'name']),
-              // 진짜 브랜드만 — analysis_type 같은 기술 태그는 노출 안 함.
-              brand: str(m, ['brand', 'brand_name']),
-              ingredients: _extractIngredients(m),
-              imageUrl: str(m, ['image_url', 'imageUrl', 'thumbnail']),
-              oilScore: 0,
-              dehydratedScore: 0,
-              sensitiveScore: 0,
-              riskLevel: _levelFrom(m),
-              analyzedAt: DateTime.tryParse(
-                      str(m, ['created_at', 'analyzed_at', 'date'])) ??
-                  DateTime.now(),
-            )));
+        ..addAll(listOf(data).map((m) {
+          // 🎯 백엔드가 matched_product로 DB 매칭 결과를 같이 보내면
+          //    그 정식 이름/브랜드/이미지를 우선 사용.
+          final mp = m['matched_product'];
+          final mpMap = mp is Map ? mp.cast<String, dynamic>() : null;
+          String pick(List<String> mpKeys, List<String> rootKeys) {
+            if (mpMap != null) {
+              final v = str(mpMap, mpKeys);
+              if (v.isNotEmpty) return v;
+            }
+            return str(m, rootKeys);
+          }
+
+          return AnalysisRecord(
+            id: '${m['analysis_id'] ?? m['id'] ?? ''}',
+            productName: pick(
+                ['product_name', 'name'], ['product_name', 'product', 'name']),
+            // 진짜 브랜드만 — analysis_type 같은 기술 태그는 노출 안 함.
+            brand: pick(['brand_name', 'brand'], ['brand', 'brand_name']),
+            ingredients: _extractIngredients(m),
+            imageUrl: pick(['image_url', 'imageUrl'],
+                ['image_url', 'imageUrl', 'thumbnail']),
+            oilScore: 0,
+            dehydratedScore: 0,
+            sensitiveScore: 0,
+            riskLevel: _levelFrom(m),
+            analyzedAt: DateTime.tryParse(
+                    str(m, ['created_at', 'analyzed_at', 'date'])) ??
+                DateTime.now(),
+          );
+        }));
       AnalysisHistoryStore.ownerUserId = currentUid;
     } on ApiException {
       // keep local cache
     } finally {
       if (mounted) setState(() => _loadingHistory = false);
+    }
+  }
+
+  /// 한 건 삭제 — 확인 다이얼로그 → 백엔드 DELETE → 로컬 캐시 제거.
+  Future<void> _deleteRecord(AnalysisRecord r) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          '분석 기록 삭제',
+          style: TextStyle(
+              fontFamily: 'Pretendard', fontWeight: FontWeight.w800),
+        ),
+        content: Text(
+          r.productName.isEmpty
+              ? '이 분석 기록을 삭제할까요?'
+              : '"${r.productName}" 분석 기록을 삭제할까요?',
+          style: const TextStyle(fontFamily: 'Pretendard', fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              '삭제',
+              style: TextStyle(color: AppColors.danger),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || r.id.isEmpty) return;
+
+    try {
+      await AnalysisService.deleteAnalysis(r.id);
+      AnalysisHistoryStore.items.removeWhere((it) => it.id == r.id);
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(content: Text('삭제했어요.')));
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 
@@ -344,6 +411,7 @@ class _AnalysesScreenState extends State<AnalysesScreen> {
                           label: _levelLabels[r.riskLevel],
                           dateText: _formatDate(r.analyzedAt),
                           onTap: () => _openHistoryResult(r),
+                          onDelete: () => _deleteRecord(r),
                         )),
                   ],
                 ],
@@ -578,6 +646,7 @@ class _HistoryCard extends StatelessWidget {
   final String label;
   final String dateText;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
 
   const _HistoryCard({
     required this.record,
@@ -585,6 +654,7 @@ class _HistoryCard extends StatelessWidget {
     required this.label,
     required this.dateText,
     required this.onTap,
+    required this.onDelete,
   });
 
   @override
@@ -636,13 +706,15 @@ class _HistoryCard extends StatelessWidget {
                     const SizedBox(height: 2),
                   ],
                   Text(
-                    // 우선순위: 성분 이름들 > 상품명 > 폴백.
-                    record.ingredients.isNotEmpty
-                        ? _AnalysesScreenState.shortIngredients(
-                            record.ingredients)
-                        : (record.productName.isEmpty
-                            ? '분석 결과'
-                            : record.productName),
+                    // 우선순위: 제품명(DB 매칭 or OCR) > 성분 요약 > 폴백.
+                    // 제품명이 있으면 사용자가 어떤 제품인지 즉시 인지 가능하므로
+                    // 성분 요약보다 먼저 노출.
+                    record.productName.isNotEmpty
+                        ? record.productName
+                        : (record.ingredients.isNotEmpty
+                            ? _AnalysesScreenState.shortIngredients(
+                                record.ingredients)
+                            : '분석 결과'),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -686,6 +758,24 @@ class _HistoryCard extends StatelessWidget {
                 ],
               ),
             ),
+            // 삭제 버튼 — 카드 탭과 분리해 이벤트 전파 차단.
+            GestureDetector(
+              onTap: onDelete,
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: AppColors.danger.withValues(alpha: 0.08),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.delete_outline,
+                  size: 18,
+                  color: AppColors.danger,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
             const Icon(Icons.chevron_right,
                 size: 20, color: AppColors.textSub),
           ],
