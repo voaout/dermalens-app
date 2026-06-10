@@ -527,17 +527,21 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                   },
                 ),
               ),
-              // 칩 우선순위: 입력 중인 자동완성 > 마지막 봇 응답의 quickReplies
-              // > 기본 메뉴 칩 (둘 다 비었을 때 가이드 역할).
+              // 칩 우선순위:
+              //  · 입력 중 → 자동완성만 (탐색에 집중)
+              //  · 그 외   → quickReplies(맥락 추천)를 앞에, 기본 메뉴를 뒤에
+              //             중복은 한 번만. 기본 4개는 항상 보이도록 보장.
               Builder(
                 builder: (_) {
                   final List<String> chips;
                   if (_autocomplete.isNotEmpty) {
                     chips = _autocomplete;
-                  } else if (_quickReplies.isNotEmpty) {
-                    chips = _quickReplies;
                   } else {
-                    chips = _defaultChips;
+                    final seen = <String>{};
+                    chips = <String>[];
+                    for (final c in [..._quickReplies, ..._defaultChips]) {
+                      if (seen.add(c.trim())) chips.add(c);
+                    }
                   }
                   return _ChipBar(chips: chips, onTap: _send);
                 },
