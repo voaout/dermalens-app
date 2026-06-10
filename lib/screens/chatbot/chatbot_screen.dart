@@ -154,6 +154,25 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     });
   }
 
+  /// 대화 초기화 — "처음으로" 버튼.
+  /// 메시지·세션·자동완성·quickReplies 모두 비우고 환영 메시지만 다시 노출.
+  void _resetChat() {
+    _autocompleteTimer?.cancel();
+    _controller.clear();
+    if (!mounted) return;
+    setState(() {
+      _messages
+        ..clear()
+        ..add(_Message.bot(
+          '안녕하세요. DermaLens 챗봇입니다.\n무엇을 도와드릴까요?',
+        ));
+      _quickReplies = [];
+      _autocomplete = const [];
+      _sessionId = null;
+    });
+    _scrollToBottom();
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
@@ -289,128 +308,103 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     pickImageForOcr(context, ImageSource.gallery);
   }
 
-  /// 링크 컴포넌트의 CTA → target에 맞는 화면 push.
+  /// 링크 컴포넌트의 CTA → 가장 가까운 화면으로 push.
   ///
-  /// 챗봇 서버가 보내는 target 키는 표기가 다양하므로(영문 enum, 한글, 공백/
-  /// 언더스코어 혼용 등), 정규화 후 여러 alias 그룹에 매칭한다.
+  /// 챗봇이 `target`을 빠뜨리거나 알 수 없는 값을 보내도 동작하도록,
+  /// `target` + `title` + `buttonText`를 모두 합쳐서 키워드 매칭한다.
+  /// 예) target이 비어도 title="피부 진단", buttonText="진단 시작하기" 같으면
+  ///     "진단" 키워드로 SurveyScreen으로 보낸다.
   void _openPageLink(Map<String, dynamic> pageLink) {
-    final raw = str(pageLink, ['target', 'page', 'route', 'name']);
-    final target = raw
+    final target = str(pageLink, ['target', 'page', 'route', 'name']);
+    final title = str(pageLink, ['title', 'name']);
+    final buttonText = str(pageLink, ['buttonText', 'cta_label', 'label']);
+
+    // 셋을 한 문자열로 합쳐 대문자/언더스코어로 정규화.
+    final haystack = [target, title, buttonText]
+        .where((s) => s.isNotEmpty)
+        .join(' ')
         .toUpperCase()
-        .replaceAll(' ', '_')
-        .replaceAll('(', '_')
-        .replaceAll(')', '');
+        .replaceAll(RegExp(r'[()\s\-]+'), '_');
+
+    debugPrint(
+      '[Chatbot] route: target="$target" title="$title" '
+      'button="$buttonText" → haystack="$haystack"',
+    );
 
     void push(Widget w) =>
         Navigator.push(context, MaterialPageRoute(builder: (_) => w));
 
-    // 피부 진단 / 설문
-    const skinTest = {
-      'SKIN_TYPE_TEST', 'SKIN_TEST', 'SKINTYPE_TEST',
-      'SKIN_DIAGNOSIS', 'DIAGNOSIS', 'SURVEY',
-      '피부_타입_진단', '피부_진단', '피부진단',
-    };
-    if (skinTest.contains(target)) {
+    bool hits(List<String> keywords) {
+      for (final k in keywords) {
+        if (haystack.contains(k.toUpperCase())) return true;
+      }
+      return false;
+    }
+
+    // 매칭 순서가 중요 — 더 구체적인 패턴부터.
+    // 피부 진단
+    if (hits(['진단', 'DIAGNOSIS', 'SURVEY', 'SKIN_TYPE_TEST', 'SKIN_TEST'])) {
       push(const SurveyScreen());
       return;
     }
-
     // OCR / 성분 사진 분석
-    const ocr = {
-      'OCR_SCAN', 'OCR', 'SCAN',
-      '성분_사진_분석_OCR', '성분_사진_분석', '성분사진분석', '사진_분석',
-    };
-    if (ocr.contains(target)) {
+    if (hits(['OCR', '사진_분석', '성분사진', '성분_사진'])) {
       _openOcrPicker();
       return;
     }
-
-    // 카테고리 / 제품 페이지
-    const category = {
-      'PRODUCT_PAGE', 'CATEGORY', 'PRODUCT_LIST', 'PRODUCTS',
-      '제품_페이지', '제품페이지', '카테고리',
-    };
-    if (category.contains(target)) {
+    // 화장대 / 루틴
+    if (hits(['루틴', '화장대', 'ROUTINE', 'VANITY'])) {
+      push(const MyVanityScreen());
+      return;
+    }
+    // 리뷰
+    if (hits(['리뷰', 'REVIEW'])) {
+      push(const MyReviewsScreen());
+      return;
+    }
+    // 알레르기
+    if (hits(['알레르기', '기피_성분', 'ALLERGY'])) {
+      push(const AllergyEditScreen());
+      return;
+    }
+    // 베타 성분 등록
+    if (hits([
+      '성분_등록', '베타_등록', '제품_등록',
+      'INGREDIENT_REGISTER', 'PRODUCT_REGISTER', 'BETA_REGISTER',
+    ])) {
+      push(const IngredientRegisterScreen());
+      return;
+    }
+    // 1:1 문의
+    if (hits(['문의', 'INQUIRY', 'CONTACT', 'SUPPORT'])) {
+      push(const InquiryScreen());
+      return;
+    }
+    // 제품 신고 / 요청
+    if (hits(['제품_신고', '제품_요청', 'PRODUCT_REPORT', 'PRODUCT_REQUEST'])) {
+      push(const ProductRequestScreen());
+      return;
+    }
+    // 앱 만족도 / 피드백
+    if (hits(['만족도', '피드백', 'SATISFACTION', 'FEEDBACK'])) {
+      push(const SatisfactionScreen());
+      return;
+    }
+    // 추천 / 카테고리 / 제품 페이지 — 가장 일반적 키워드라 마지막에.
+    if (hits([
+      '추천', '카테고리', '제품_페이지', '제품_목록',
+      'CATEGORY', 'PRODUCT_PAGE', 'PRODUCT_LIST', 'RECOMMEND',
+    ])) {
       push(const CategoryScreen());
       return;
     }
 
-    // 화장대 / 루틴
-    const routine = {
-      'ROUTINE', 'VANITY', 'MY_VANITY',
-      '바르는_루틴', '루틴', '화장대', '나의_화장대',
-    };
-    if (routine.contains(target)) {
-      push(const MyVanityScreen());
-      return;
-    }
-
-    // 리뷰
-    const review = {
-      'REVIEW_PAGE', 'REVIEW', 'MY_REVIEWS', 'REVIEWS',
-      '리뷰_페이지', '리뷰', '내_리뷰',
-    };
-    if (review.contains(target)) {
-      push(const MyReviewsScreen());
-      return;
-    }
-
-    // 알레르기 / 기피 성분
-    const allergy = {
-      'ALLERGY_MANAGEMENT', 'ALLERGY', 'ALLERGIES',
-      '알레르기_관리', '알레르기', '기피_성분',
-    };
-    if (allergy.contains(target)) {
-      push(const AllergyEditScreen());
-      return;
-    }
-
-    // 베타 성분 등록
-    const register = {
-      'PRODUCT_REGISTER', 'INGREDIENT_REGISTER', 'BETA_REGISTER',
-      '제품_등록', '성분_등록', '베타_등록',
-    };
-    if (register.contains(target)) {
-      push(const IngredientRegisterScreen());
-      return;
-    }
-
-    // 1:1 문의
-    const inquiry = {
-      'INQUIRY', 'CONTACT', 'SUPPORT',
-      '문의하기', '문의', '1:1_문의',
-    };
-    if (inquiry.contains(target)) {
-      push(const InquiryScreen());
-      return;
-    }
-
-    // 제품 신고 / 등록 요청
-    const report = {
-      'PRODUCT_REPORT', 'PRODUCT_REQUEST', 'REPORT',
-      '제품_신고', '제품_요청', '신고',
-    };
-    if (report.contains(target)) {
-      push(const ProductRequestScreen());
-      return;
-    }
-
-    // 앱 만족도
-    const satisfaction = {
-      'SATISFACTION', 'FEEDBACK',
-      '앱_만족도_평가', '만족도', '피드백',
-    };
-    if (satisfaction.contains(target)) {
-      push(const SatisfactionScreen());
-      return;
-    }
-
-    // 매칭 실패 — 콘솔에 찍어서 어떤 target이 왔는지 디버깅 가능하게.
-    debugPrint('[Chatbot] Unmatched target: raw="$raw"  normalized="$target"');
+    // 그래도 못 잡으면 콘솔에 찍고 안내.
+    debugPrint('[Chatbot] Unmatched route — haystack="$haystack"');
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
       ..showSnackBar(SnackBar(
-          content: Text('아직 연결되지 않은 페이지예요. ($target)')));
+          content: Text('해당 페이지를 찾지 못했어요. (${target.isEmpty ? title : target})')));
   }
 
   void _openIngredientDetail(Map<String, dynamic> ingredient) {
@@ -487,7 +481,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
         child: SafeArea(
           child: Column(
             children: [
-              const _ChatHeader(),
+              _ChatHeader(onReset: _resetChat),
               Expanded(
                 child: ListView.builder(
                   controller: _scrollController,
@@ -609,7 +603,9 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
 // =================== sub-widgets ===================
 
 class _ChatHeader extends StatelessWidget {
-  const _ChatHeader();
+  final VoidCallback onReset;
+
+  const _ChatHeader({required this.onReset});
 
   @override
   Widget build(BuildContext context) {
@@ -643,13 +639,44 @@ class _ChatHeader extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          Text(
-            '피부·성분 기반 AI',
-            style: TextStyle(
-              fontFamily: 'Pretendard',
-              fontSize: 11.5,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textSub.withValues(alpha: 0.85),
+          GestureDetector(
+            onTap: onReset,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: AppColors.primary.withValues(alpha: 0.35),
+                  width: 0.8,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withValues(alpha: 0.08),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.refresh_rounded,
+                      size: 14, color: AppColors.primary),
+                  SizedBox(width: 4),
+                  Text(
+                    '처음으로',
+                    style: TextStyle(
+                      fontFamily: 'Pretendard',
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -889,7 +916,11 @@ class _ComponentCard extends StatelessWidget {
       fallback: isLink ? '바로 가기' : '자세히 보기',
     );
 
-    return GlassCard(
+    // 카드 어디를 눌러도 동작하도록 전체를 InkWell로 감쌈 — 버튼 누락 방지.
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: GlassCard(
       borderRadius: 22,
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -1006,6 +1037,7 @@ class _ComponentCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }
