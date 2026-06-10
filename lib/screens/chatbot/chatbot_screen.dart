@@ -225,7 +225,14 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       );
       final intent = str(res, ['intent']);
       final score = (res['score'] ?? res['confidence']) as num?;
-      final components = listOf(res['components']);
+
+      // 카드에 message-level intent를 끼워넣어 라우팅에서 활용.
+      // (챗봇이 카드 안에 target/title을 안 넣고 intent에만 담는 경우 대응)
+      final rawComponents = listOf(res['components']);
+      final components = rawComponents
+          .map((c) => {...c, '_intent': intent})
+          .toList();
+
       final quickReplies = listOf(res['quickReplies'])
           .map((e) => e.toString())
           .toList();
@@ -318,9 +325,11 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     final target = str(pageLink, ['target', 'page', 'route', 'name']);
     final title = str(pageLink, ['title', 'name']);
     final buttonText = str(pageLink, ['buttonText', 'cta_label', 'label']);
+    // 메시지 단위 intent — _send에서 카드에 끼워넣음.
+    final intent = str(pageLink, ['_intent', 'intent']);
 
-    // 셋을 한 문자열로 합쳐 대문자/언더스코어로 정규화.
-    final haystack = [target, title, buttonText]
+    // 넷을 한 문자열로 합쳐 대문자/언더스코어로 정규화.
+    final haystack = [target, title, buttonText, intent]
         .where((s) => s.isNotEmpty)
         .join(' ')
         .toUpperCase()
@@ -328,7 +337,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
 
     debugPrint(
       '[Chatbot] route: target="$target" title="$title" '
-      'button="$buttonText" → haystack="$haystack"',
+      'button="$buttonText" intent="$intent" → haystack="$haystack"',
     );
 
     void push(Widget w) =>
@@ -343,27 +352,37 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
 
     // 매칭 순서가 중요 — 더 구체적인 패턴부터.
     // 피부 진단
-    if (hits(['진단', 'DIAGNOSIS', 'SURVEY', 'SKIN_TYPE_TEST', 'SKIN_TEST'])) {
+    if (hits([
+      '진단', 'DIAGNOSIS', 'SURVEY',
+      'SKIN_TYPE_TEST', 'SKIN_TEST', 'SKIN_TYPE',
+    ])) {
       push(const SurveyScreen());
       return;
     }
     // OCR / 성분 사진 분석
-    if (hits(['OCR', '사진_분석', '성분사진', '성분_사진'])) {
+    if (hits([
+      'OCR', '사진_분석', '성분사진', '성분_사진',
+      'OCR_SCAN', 'INGREDIENT_OCR', 'PHOTO_ANALYSIS',
+    ])) {
       _openOcrPicker();
       return;
     }
     // 화장대 / 루틴
-    if (hits(['루틴', '화장대', 'ROUTINE', 'VANITY'])) {
+    if (hits([
+      '루틴', '화장대', 'ROUTINE', 'VANITY', 'ROUTINE_GUIDE',
+    ])) {
       push(const MyVanityScreen());
       return;
     }
     // 리뷰
-    if (hits(['리뷰', 'REVIEW'])) {
+    if (hits(['리뷰', 'REVIEW', 'REVIEW_LIST', 'MY_REVIEW'])) {
       push(const MyReviewsScreen());
       return;
     }
     // 알레르기
-    if (hits(['알레르기', '기피_성분', 'ALLERGY'])) {
+    if (hits([
+      '알레르기', '기피_성분', 'ALLERGY', 'ALLERGY_EDIT', 'ALLERGEN',
+    ])) {
       push(const AllergyEditScreen());
       return;
     }
@@ -371,29 +390,39 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     if (hits([
       '성분_등록', '베타_등록', '제품_등록',
       'INGREDIENT_REGISTER', 'PRODUCT_REGISTER', 'BETA_REGISTER',
+      'INGREDIENT_SCAN', 'BETA',
     ])) {
       push(const IngredientRegisterScreen());
       return;
     }
     // 1:1 문의
-    if (hits(['문의', 'INQUIRY', 'CONTACT', 'SUPPORT'])) {
+    if (hits([
+      '문의', 'INQUIRY', 'CONTACT', 'SUPPORT', 'HELP',
+    ])) {
       push(const InquiryScreen());
       return;
     }
     // 제품 신고 / 요청
-    if (hits(['제품_신고', '제품_요청', 'PRODUCT_REPORT', 'PRODUCT_REQUEST'])) {
+    if (hits([
+      '제품_신고', '제품_요청', '신고',
+      'PRODUCT_REPORT', 'PRODUCT_REQUEST', 'REPORT_PRODUCT',
+    ])) {
       push(const ProductRequestScreen());
       return;
     }
     // 앱 만족도 / 피드백
-    if (hits(['만족도', '피드백', 'SATISFACTION', 'FEEDBACK'])) {
+    if (hits([
+      '만족도', '피드백',
+      'SATISFACTION', 'FEEDBACK', 'APP_FEEDBACK', 'RATING',
+    ])) {
       push(const SatisfactionScreen());
       return;
     }
     // 추천 / 카테고리 / 제품 페이지 — 가장 일반적 키워드라 마지막에.
     if (hits([
       '추천', '카테고리', '제품_페이지', '제품_목록',
-      'CATEGORY', 'PRODUCT_PAGE', 'PRODUCT_LIST', 'RECOMMEND',
+      'CATEGORY', 'PRODUCT_PAGE', 'PRODUCT_LIST', 'PRODUCT_RECOMMEND',
+      'RECOMMEND', 'RECOMMENDATION',
     ])) {
       push(const CategoryScreen());
       return;
