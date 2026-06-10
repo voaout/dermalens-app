@@ -115,8 +115,8 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     _autocompleteTimer = Timer(const Duration(milliseconds: 220), () async {
       try {
         final data = await ApiClient.I.get(
-          ProductsApi.ingredientSearch,
-          query: {'name': value},
+          AnalysisApi.ingredientsSearch,
+          query: {'q': value, 'limit': '8'},
         );
         final list = listOf(data).take(8).toList();
         if (!mounted) return;

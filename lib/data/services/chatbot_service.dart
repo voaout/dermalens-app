@@ -30,7 +30,7 @@ class ChatbotService {
   ChatbotService._();
 
   static const String _baseUrl =
-      'https://dermalens-chatbot-production.up.railway.app';
+      'https://chatbot-production-45a8.up.railway.app';
   static const Duration _timeout = Duration(seconds: 30);
 
   static final http.Client _client = http.Client();

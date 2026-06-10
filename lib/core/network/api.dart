@@ -143,6 +143,10 @@ class AnalysisApi {
       '/api/analysis/delete/$analysisId/';
   static String history(Object userId) => '/api/analysis/history/$userId/';
 
+  /// 챗봇 자동완성용 성분 검색 — `?q=정제&limit=8`
+  static const String ingredientsSearch =
+      '/api/analysis/ingredients/search/';
+
   static const String chat = '/api/analysis/chat/'; // { user_id, message }
   static const String chatStart = '/api/analysis/chat/start/';
   static const String chatMessage = '/api/analysis/chat/message/';
