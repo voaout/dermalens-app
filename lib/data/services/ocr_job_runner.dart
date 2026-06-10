@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 import '../../core/network/api_client.dart';
 import 'analysis_service.dart';
@@ -43,28 +43,45 @@ class OcrJobRunner {
     return const Duration(seconds: 10);
   }
 
-  /// Pure pipeline: upload + poll detail → result. Lifecycle/badge updates
-  /// happen in [AnalysisJobsStore.start], which wraps this call.
+  /// Pure pipeline: upload → (inline 또는 polling) → result.
+  /// Lifecycle/badge 갱신은 [AnalysisJobsStore.start] 래퍼에서 처리.
   static Future<OcrJobResult> run(List<Uint8List> bytesList) async {
     assert(bytesList.isNotEmpty, 'OCR job needs at least one image');
     try {
-      // 1) 업로드 + OCR 요청 → analysis_id 수신. 같은 image 필드를 반복해서
-      //    여러 장을 한 번의 multipart로 전송 → 한 번의 분석으로 묶임.
+      // 1) 업로드 + OCR 요청. 같은 image 필드를 반복해서 multipart 한 번에 전송.
       final res =
           await AnalysisService.requestOcrWithMultipleBytes(bytesList);
       final body = mapOf(res);
+
+      if (kDebugMode) {
+        debugPrint(
+          '[OcrJob] upload response keys=${body.keys.toList()} '
+          'has_matched_product=${body.containsKey('matched_product')} '
+          'has_analysis=${body.containsKey('analysis')}',
+        );
+      }
+
+      // 2-A) 인라인 결과 우선 시도 — 백엔드가 완전한 결과를 즉시 반환했다면
+      //      ID 없이도 그걸 그대로 쓰면 됨 (폴링 불필요).
+      final inlineResult = _extractResult(body);
+      if (inlineResult != null && _isReady(inlineResult)) {
+        final inlineId = _pickAnalysisId(body) ?? '';
+        if (kDebugMode) {
+          debugPrint('[OcrJob] inline result ready, id="$inlineId"');
+        }
+        return OcrJobResult(analysisId: inlineId, data: inlineResult);
+      }
+
+      // 2-B) 인라인이 아니면 ID 받아서 폴링. ID 없으면 추적 불가 → 에러.
       final analysisId = _pickAnalysisId(body);
       if (analysisId == null) {
+        if (kDebugMode) {
+          debugPrint('[OcrJob] no inline result & no analysis_id → giving up');
+        }
         throw const OcrJobError('분석 ID를 받지 못했어요.');
       }
 
-      // 일부 백엔드는 업로드 응답에 결과를 같이 보낼 수도 있음.
-      final inlineResult = _extractResult(body);
-      if (inlineResult != null && _isReady(inlineResult)) {
-        return OcrJobResult(analysisId: analysisId, data: inlineResult);
-      }
-
-      // 2) detail 폴링 — OCR 서버 콜백이 채울 때까지 백오프하며 대기.
+      // 3) detail 폴링 — OCR 서버 콜백이 채울 때까지 백오프하며 대기.
       final start = DateTime.now();
       while (true) {
         final elapsed = DateTime.now().difference(start);
