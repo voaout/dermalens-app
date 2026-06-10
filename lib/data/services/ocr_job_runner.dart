@@ -149,8 +149,21 @@ class OcrJobRunner {
       return <String, dynamic>{...resultLevel, ...?payload, ...?body};
     }
 
+    // C) Production 백엔드 형태:
+    //    { success, matched_product, analysis: {...}, ingredient_details: [...] }
+    //    → analysis(본체) + 같은 레벨의 보조 필드(matched_product 등)를 함께 보존.
     for (final key in ['analysis', 'data']) {
-      if (top[key] is Map) return (top[key] as Map).cast<String, dynamic>();
+      if (top[key] is Map) {
+        final inner = (top[key] as Map).cast<String, dynamic>();
+        // 컨테이너 키와 단순 메타(success 등)는 제외하고 최상위 보조 필드만 모음.
+        const skip = {'analysis', 'data', 'result', 'success'};
+        final topAux = <String, dynamic>{
+          for (final e in top.entries)
+            if (!skip.contains(e.key)) e.key: e.value,
+        };
+        // inner가 가장 권위 있음. 같은 키 있으면 inner가 이김.
+        return <String, dynamic>{...topAux, ...inner};
+      }
     }
     return top.isEmpty ? null : top;
   }
