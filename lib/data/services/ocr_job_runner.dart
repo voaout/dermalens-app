@@ -107,17 +107,20 @@ class OcrJobRunner {
   static Map<String, dynamic>? extractResult(Map<String, dynamic> top) =>
       _extractResult(top);
 
-  /// 분석 결과 추출. 백엔드 응답 모양이 다음 두 가지 패턴 모두 지원:
+  /// 분석 결과 추출. 백엔드 응답 모양이 다음 패턴 모두 지원:
   ///
   /// A) 신규 형태:
-  ///    { result: { sent_payload: {...}, backend_response: { body: {...} } } }
-  ///    → body가 본체, sent_payload는 image_url/ocr_confidence/raw_text 등을 채움.
+  ///    { result: { sent_payload: {...}, backend_response: { body: {...} },
+  ///                matched_product: {...} } }
+  ///    → body가 본체. sent_payload는 image_url 등 보조. matched_product 등
+  ///      result 레벨 직속 필드(컨테이너 제외)도 함께 병합한다.
   ///
   /// B) 단순 인라인:
   ///    { result: {...} } 또는 { analysis: {...} } 또는 { data: {...} } 또는 top.
   static Map<String, dynamic>? _extractResult(Map<String, dynamic> top) {
     Map<String, dynamic>? body;
     Map<String, dynamic>? payload;
+    Map<String, dynamic> resultLevel = const {};
 
     final r = top['result'];
     if (r is Map) {
@@ -129,13 +132,21 @@ class OcrJobRunner {
       if (rm['sent_payload'] is Map) {
         payload = (rm['sent_payload'] as Map).cast<String, dynamic>();
       }
+      // result 레벨의 직속 필드 — matched_product 같이 컨테이너 밖에 있는
+      // 데이터를 보존하기 위해 별도로 모음. 컨테이너 키(이미 펼친 것)는 제외.
+      const skipKeys = {'backend_response', 'sent_payload'};
+      resultLevel = <String, dynamic>{
+        for (final e in rm.entries)
+          if (!skipKeys.contains(e.key)) e.key: e.value,
+      };
       // 중첩이 없으면 result 자체를 결과로 사용.
       if (body == null && payload == null) return rm;
     }
 
     if (body != null || payload != null) {
-      // body 우선, payload는 image_url/ocr_confidence 등 보조 필드를 채움.
-      return <String, dynamic>{...?payload, ...?body};
+      // 우선순위 (낮은 → 높은): resultLevel → payload → body
+      // 같은 키가 있으면 body가 가장 권위 있음.
+      return <String, dynamic>{...resultLevel, ...?payload, ...?body};
     }
 
     for (final key in ['analysis', 'data']) {

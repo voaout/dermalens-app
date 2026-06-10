@@ -93,6 +93,12 @@ OcrResultScreen buildResultScreen(
   // 있으면 제품명·브랜드·이미지·가격을 정확한 DB 값으로 표시.
   final mp = r['matched_product'];
   final matchedProduct = mp is Map ? mp.cast<String, dynamic>() : null;
+
+  // 디버그 — 브라우저 콘솔에서 matched_product가 도착했는지/추출됐는지 확인.
+  debugPrint(
+    '[OCR Result] keys=${r.keys.toList()} '
+    'matched_product=${matchedProduct != null ? matchedProduct.keys.toList() : "null"}',
+  );
   String mpStr(List<String> keys) {
     if (matchedProduct == null) return '';
     for (final k in keys) {
