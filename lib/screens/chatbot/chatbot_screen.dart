@@ -118,12 +118,29 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
           AnalysisApi.ingredientsSearch,
           query: {'q': value, 'limit': '8'},
         );
-        final list = listOf(data).take(8).toList();
         if (!mounted) return;
+
+        // 응답 형태가 두 가지 모두 가능하도록 방어적으로 파싱:
+        //   1) 새 형태(현재): { "ingredients": ["문자열1", "문자열2", ...] }
+        //   2) 옛 형태(객체):  [{ "ingredient_name_kr": "...", ... }, ...]
+        final names = <String>[];
+        final body = mapOf(data);
+        final raw = body['ingredients'] ?? body['results'] ?? data;
+        if (raw is List) {
+          for (final item in raw) {
+            if (item is String && item.isNotEmpty) {
+              names.add(item);
+            } else if (item is Map) {
+              final s = str(item.cast<String, dynamic>(),
+                  ['ingredient_name_kr', 'name_kr', 'name']);
+              if (s.isNotEmpty) names.add(s);
+            }
+          }
+        }
+
         // 추천 칩은 "{성분명} 알려줘" 형식으로 — 탭하면 그대로 챗봇에 전송됨.
-        final chips = list
-            .map((m) => str(m, ['ingredient_name_kr', 'name_kr', 'name']))
-            .where((s) => s.isNotEmpty)
+        final chips = names
+            .take(8)
             .map((s) => '$s 알려줘')
             .toList();
         setState(() => _autocomplete = chips);
@@ -241,66 +258,127 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   }
 
   /// 링크 컴포넌트의 CTA → target에 맞는 화면 push.
+  ///
+  /// 챗봇 서버가 보내는 target 키는 표기가 다양하므로(영문 enum, 한글, 공백/
+  /// 언더스코어 혼용 등), 정규화 후 여러 alias 그룹에 매칭한다.
   void _openPageLink(Map<String, dynamic> pageLink) {
-    final target = str(pageLink, ['target', 'page', 'route', 'name'])
+    final raw = str(pageLink, ['target', 'page', 'route', 'name']);
+    final target = raw
         .toUpperCase()
-        .replaceAll(' ', '_');
+        .replaceAll(' ', '_')
+        .replaceAll('(', '_')
+        .replaceAll(')', '');
 
     void push(Widget w) =>
         Navigator.push(context, MaterialPageRoute(builder: (_) => w));
 
-    switch (target) {
-      case 'SKIN_TYPE_TEST':
-      case 'SURVEY':
-      case '피부_타입_진단':
-        push(const SurveyScreen());
-        break;
-      case 'OCR_SCAN':
-      case 'OCR':
-      case '성분_사진_분석(OCR)':
-      case '성분_사진_분석':
-        _openOcrPicker();
-        break;
-      case 'PRODUCT_PAGE':
-      case '제품_페이지':
-      case 'CATEGORY':
-        push(const CategoryScreen());
-        break;
-      case 'ROUTINE':
-      case '바르는_루틴':
-        push(const MyVanityScreen());
-        break;
-      case 'REVIEW_PAGE':
-      case '리뷰_페이지':
-        push(const MyReviewsScreen());
-        break;
-      case 'ALLERGY_MANAGEMENT':
-      case '알레르기_관리':
-        push(const AllergyEditScreen());
-        break;
-      case 'PRODUCT_REGISTER':
-      case 'INGREDIENT_REGISTER':
-      case '제품_등록':
-        push(const IngredientRegisterScreen());
-        break;
-      case 'INQUIRY':
-      case '문의하기':
-        push(const InquiryScreen());
-        break;
-      case 'PRODUCT_REPORT':
-      case '제품_신고':
-        push(const ProductRequestScreen());
-        break;
-      case 'SATISFACTION':
-      case '앱_만족도_평가':
-        push(const SatisfactionScreen());
-        break;
-      default:
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(
-              content: Text('아직 연결되지 않은 페이지예요. ($target)')));
+    // 피부 진단 / 설문
+    const skinTest = {
+      'SKIN_TYPE_TEST', 'SKIN_TEST', 'SKINTYPE_TEST',
+      'SKIN_DIAGNOSIS', 'DIAGNOSIS', 'SURVEY',
+      '피부_타입_진단', '피부_진단', '피부진단',
+    };
+    if (skinTest.contains(target)) {
+      push(const SurveyScreen());
+      return;
     }
+
+    // OCR / 성분 사진 분석
+    const ocr = {
+      'OCR_SCAN', 'OCR', 'SCAN',
+      '성분_사진_분석_OCR', '성분_사진_분석', '성분사진분석', '사진_분석',
+    };
+    if (ocr.contains(target)) {
+      _openOcrPicker();
+      return;
+    }
+
+    // 카테고리 / 제품 페이지
+    const category = {
+      'PRODUCT_PAGE', 'CATEGORY', 'PRODUCT_LIST', 'PRODUCTS',
+      '제품_페이지', '제품페이지', '카테고리',
+    };
+    if (category.contains(target)) {
+      push(const CategoryScreen());
+      return;
+    }
+
+    // 화장대 / 루틴
+    const routine = {
+      'ROUTINE', 'VANITY', 'MY_VANITY',
+      '바르는_루틴', '루틴', '화장대', '나의_화장대',
+    };
+    if (routine.contains(target)) {
+      push(const MyVanityScreen());
+      return;
+    }
+
+    // 리뷰
+    const review = {
+      'REVIEW_PAGE', 'REVIEW', 'MY_REVIEWS', 'REVIEWS',
+      '리뷰_페이지', '리뷰', '내_리뷰',
+    };
+    if (review.contains(target)) {
+      push(const MyReviewsScreen());
+      return;
+    }
+
+    // 알레르기 / 기피 성분
+    const allergy = {
+      'ALLERGY_MANAGEMENT', 'ALLERGY', 'ALLERGIES',
+      '알레르기_관리', '알레르기', '기피_성분',
+    };
+    if (allergy.contains(target)) {
+      push(const AllergyEditScreen());
+      return;
+    }
+
+    // 베타 성분 등록
+    const register = {
+      'PRODUCT_REGISTER', 'INGREDIENT_REGISTER', 'BETA_REGISTER',
+      '제품_등록', '성분_등록', '베타_등록',
+    };
+    if (register.contains(target)) {
+      push(const IngredientRegisterScreen());
+      return;
+    }
+
+    // 1:1 문의
+    const inquiry = {
+      'INQUIRY', 'CONTACT', 'SUPPORT',
+      '문의하기', '문의', '1:1_문의',
+    };
+    if (inquiry.contains(target)) {
+      push(const InquiryScreen());
+      return;
+    }
+
+    // 제품 신고 / 등록 요청
+    const report = {
+      'PRODUCT_REPORT', 'PRODUCT_REQUEST', 'REPORT',
+      '제품_신고', '제품_요청', '신고',
+    };
+    if (report.contains(target)) {
+      push(const ProductRequestScreen());
+      return;
+    }
+
+    // 앱 만족도
+    const satisfaction = {
+      'SATISFACTION', 'FEEDBACK',
+      '앱_만족도_평가', '만족도', '피드백',
+    };
+    if (satisfaction.contains(target)) {
+      push(const SatisfactionScreen());
+      return;
+    }
+
+    // 매칭 실패 — 콘솔에 찍어서 어떤 target이 왔는지 디버깅 가능하게.
+    debugPrint('[Chatbot] Unmatched target: raw="$raw"  normalized="$target"');
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+          content: Text('아직 연결되지 않은 페이지예요. ($target)')));
   }
 
   void _openIngredientDetail(Map<String, dynamic> ingredient) {
